@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Infinite Grid</title>
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #fbfbfc;
+      font-family: Arial, sans-serif;
+    }
+
+    #viewport {
+      position: fixed;
+      inset: 0;
+      overflow: auto;
+      background: #fbfbfc;
+      cursor: grab;
+    }
+
+    #viewport:active {
+      cursor: grabbing;
+    }
+
+    #world {
+      position: relative;
+      width: 120000px;
+      height: 120000px;
+      background: #fbfbfc;
+    }
+
+    .cell {
+      position: absolute;
+      width: 28px;
+      height: 28px;
+      box-sizing: border-box;
+      border-right: 1px solid rgba(0, 0, 0, 0.06);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      background: transparent;
+      pointer-events: none;
+    }
+
+    /* Slightly stronger line every 5 cells for orientation */
+    .major-right {
+      border-right-color: rgba(0, 0, 0, 0.10);
+    }
+
+    .major-bottom {
+      border-bottom-color: rgba(0, 0, 0, 0.10);
+    }
+  </style>
+</head>
+<body>
+  <div id="viewport">
+    <div id="world"></div>
+  </div>
+
+  <script>
+    $(function () {
+      const CELL = 28;
+      const OVERSCAN = 1600;      // large hidden margin around the viewport
+      const WORLD_SIZE = 120000;  // large finite scroll area, recentred as needed
+      const RECENTER_EDGE = 18000;
+
+      const $viewport = $('#viewport');
+      const $world = $('#world');
+
+      const WORLD_CENTER = WORLD_SIZE / 2;
+
+      // Logical offset: logical coordinate = origin + scroll position
+      let originX = -WORLD_CENTER;
+      let originY = -WORLD_CENTER;
+
+      let rafScheduled = false;
+      let dragging = false;
+      let dragStartX = 0;
+      let dragStartY = 0;
+      let startScrollLeft = 0;
+      let startScrollTop = 0;
+
+      function viewportWidth() {
+        return $viewport.innerWidth();
+      }
+
+      function viewportHeight() {
+        return $viewport.innerHeight();
+      }
+
+      function centerViewport() {
+        const left = WORLD_CENTER - viewportWidth() / 2;
+        const top = WORLD_CENTER - viewportHeight() / 2;
+        $viewport.scrollLeft(left);
+        $viewport.scrollTop(top);
+      }
+
+      function logicalLeft() {
+        return originX + $viewport.scrollLeft();
+      }
+
+      function logicalTop() {
+        return originY + $viewport.scrollTop();
+      }
+
+      function scheduleRender() {
+        if (rafScheduled) return;
+        rafScheduled = true;
+        requestAnimationFrame(function () {
+          rafScheduled = false;
+          recenterIfNeeded();
+          renderGrid();
+        });
+      }
+
+      function recenterIfNeeded() {
+        const sl = $viewport.scrollLeft();
+        const st = $viewport.scrollTop();
+        const vw = viewportWidth();
+        const vh = viewportHeight();
+
+        const nearLeft = sl < RECENTER_EDGE;
+        const nearTop = st < RECENTER_EDGE;
+        const nearRight = sl > WORLD_SIZE - vw - RECENTER_EDGE;
+        const nearBottom = st > WORLD_SIZE - vh - RECENTER_EDGE;
+
+        if (!nearLeft && !nearTop && !nearRight && !nearBottom) return;
+
+        const currentLogicalLeft = logicalLeft();
+        const currentLogicalTop = logicalTop();
+
+        const targetLeft = WORLD_CENTER - vw / 2;
+        const targetTop = WORLD_CENTER - vh / 2;
+
+        originX = currentLogicalLeft - targetLeft;
+        originY = currentLogicalTop - targetTop;
+
+        $viewport.scrollLeft(targetLeft);
+        $viewport.scrollTop(targetTop);
+      }
+
+      function renderGrid() {
+        const vw = viewportWidth();
+        const vh = viewportHeight();
+
+        const left = logicalLeft();
+        const top = logicalTop();
+
+        const startCol = Math.floor((left - OVERSCAN) / CELL);
+        const endCol = Math.ceil((left + vw + OVERSCAN) / CELL);
+        const startRow = Math.floor((top - OVERSCAN) / CELL);
+        const endRow = Math.ceil((top + vh + OVERSCAN) / CELL);
+
+        let html = '';
+
+        for (let row = startRow; row < endRow; row++) {
+          const y = row * CELL - originY;
+          const majorBottom = (row % 5 === 0) ? ' major-bottom' : '';
+
+          for (let col = startCol; col < endCol; col++) {
+            const x = col * CELL - originX;
+            const majorRight = (col % 5 === 0) ? ' major-right' : '';
+
+            html +=
+              '<div class="cell' + majorRight + majorBottom + '" ' +
+              'style="left:' + x + 'px; top:' + y + 'px;"></div>';
+          }
+        }
+
+        $world.html(html);
+      }
+
+      // Scroll-driven generation
+      $viewport.on('scroll', scheduleRender);
+
+      // Optional mouse drag panning
+      $viewport.on('mousedown', function (e) {
+        dragging = true;
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        startScrollLeft = $viewport.scrollLeft();
+        startScrollTop = $viewport.scrollTop();
+        e.preventDefault();
+      });
+
+      $(window).on('mousemove', function (e) {
+        if (!dragging) return;
+        $viewport.scrollLeft(startScrollLeft - (e.clientX - dragStartX));
+        $viewport.scrollTop(startScrollTop - (e.clientY - dragStartY));
+      });
+
+      $(window).on('mouseup', function () {
+        dragging = false;
+      });
+
+      $(window).on('resize', scheduleRender);
+
+      centerViewport();
+      renderGrid();
+    });
+  </script>
+</body>
+</html>
