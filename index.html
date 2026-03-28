@@ -32,6 +32,10 @@
       width: 120000px;
       height: 120000px;
       background: #fbfbfc;
+      /* Prevent selection and default touch behaviors on iPhone */
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     .cell {
@@ -44,6 +48,10 @@
       background: transparent;
       pointer-events: auto;
       cursor: pointer;
+      /* Ensure cells are not selectable */
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     #palette {
@@ -60,6 +68,7 @@
       z-index: 1000;
       border-radius: 8px;
       user-select: none;
+      -webkit-touch-callout: none;
     }
 
     #palette .swatch {
@@ -82,6 +91,12 @@
       right: 12px;
       z-index: 1100;
       user-select: none;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      transition: all 0.2s ease;
+      overflow: hidden;
     }
 
     #saveBtn {
@@ -91,35 +106,49 @@
     #menuBtn {
       width: 38px;
       height: 38px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-      background: #fff;
+      border: none;
+      background: transparent;
       color: #333;
       font-size: 18px;
       cursor: pointer;
       line-height: 1;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     #menuDropdown {
       display: none;
-      margin-top: 8px;
-      border: 1px solid #ccc;
       background: #fff;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      border-radius: 6px;
-      overflow: hidden;
       min-width: 160px;
+    }
+
+    #menu.menu-open {
+      width: auto;
+      height: auto;
+    }
+
+    #menu.menu-open #menuBtn {
+      display: none;
+    }
+
+    #menu.menu-open #menuDropdown {
+      display: block;
     }
 
     #menuDropdown button {
       width: 100%;
-      padding: 9px 10px;
+      padding: 12px 16px;
       border: none;
       background: #fff;
       text-align: left;
       cursor: pointer;
       font-size: 14px;
+      border-bottom: 1px solid #eee;
+    }
+
+    #menuDropdown button:last-child {
+      border-bottom: none;
     }
 
     #menuDropdown button:hover {
@@ -144,6 +173,7 @@
   <div id="menu">
     <button id="menuBtn" aria-label="Menu">☰</button>
     <div id="menuDropdown" role="menu">
+      <button id="closeMenuBtn" role="menuitem" style="font-weight: bold; color: #666;">Close</button>
       <button id="clearBtn" role="menuitem">Clear All</button>
       <button id="exportBtn" role="menuitem">Export PNG</button>
       <button id="saveBtn" role="menuitem">Save to Local Storage</button>
@@ -432,12 +462,11 @@
       }
 
       function toggleMenu() {
-        const $menu = $('#menuDropdown');
-        $menu.toggle();
+        $('#menu').toggleClass('menu-open');
       }
 
       function closeMenu() {
-        $('#menuDropdown').hide();
+        $('#menu').removeClass('menu-open');
       }
 
       createPalette();
@@ -446,6 +475,11 @@
       $('#menuBtn').on('click', function (e) {
         e.stopPropagation();
         toggleMenu();
+      });
+
+      $('#closeMenuBtn').on('click', function (e) {
+        e.stopPropagation();
+        closeMenu();
       });
 
       $('#clearBtn').on('click', function () {
@@ -466,40 +500,71 @@
         closeMenu();
       });
 
-      $(document).on('click', function () {
-        closeMenu();
-      });
-
-      $world.on('mousedown', function (e) {
-        if (e.which !== 1) return;
-        longPressTriggered = false;
-        holdStartX = e.clientX;
-        holdStartY = e.clientY;
-
-        longPressTimer = setTimeout(function () {
-          longPressTriggered = true;
-          showPalette(e.clientX, e.clientY);
-        }, 400);
-      });
-
-      $world.on('mousemove', function (e) {
-        if (!longPressTimer) return;
-        if (Math.abs(e.clientX - holdStartX) > 5 || Math.abs(e.clientY - holdStartY) > 5) {
-          clearTimeout(longPressTimer);
-          longPressTimer = null;
+      $(document).on('click', function (e) {
+        if (!$(e.target).closest('#menu').length) {
+          closeMenu();
         }
       });
 
-      $world.on('mouseup', function (e) {
+      function handleHoldStart(x, y) {
+        longPressTriggered = false;
+        holdStartX = x;
+        holdStartY = y;
+
+        longPressTimer = setTimeout(function () {
+          longPressTriggered = true;
+          showPalette(x, y);
+        }, 450);
+      }
+
+      function handleHoldMove(x, y) {
+        if (!longPressTimer) return;
+        if (Math.abs(x - holdStartX) > 10 || Math.abs(y - holdStartY) > 10) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      }
+
+      function handleHoldEnd() {
         if (longPressTimer) {
           clearTimeout(longPressTimer);
           longPressTimer = null;
         }
+      }
+
+      $world.on('mousedown', function (e) {
+        if (e.which !== 1) return;
+        handleHoldStart(e.clientX, e.clientY);
+      });
+
+      $(window).on('mousemove', function (e) {
+        handleHoldMove(e.clientX, e.clientY);
+      });
+
+      $(window).on('mouseup', function () {
+        handleHoldEnd();
+      });
+
+      $world.on('touchstart', function (e) {
+        const touch = e.originalEvent.touches[0];
+        handleHoldStart(touch.clientX, touch.clientY);
+      });
+
+      $world.on('touchmove', function (e) {
+        const touch = e.originalEvent.touches[0];
+        handleHoldMove(touch.clientX, touch.clientY);
+      });
+
+      $world.on('touchend', function () {
+        handleHoldEnd();
+      });
+
+      $world.on('contextmenu', function (e) {
+        e.preventDefault();
       });
 
       $world.on('click', 'div.cell', function (e) {
         if (longPressTriggered) {
-          e.stopPropagation();
           return;
         }
 
@@ -508,7 +573,7 @@
         toggleCellColor(row, col);
       });
 
-      $(document).on('mousedown', function (e) {
+      $(document).on('mousedown touchstart', function (e) {
         if ($(e.target).closest('#palette').length === 0 && !$(e.target).is('.swatch')) {
           hidePalette();
         }
