@@ -42,7 +42,34 @@
       border-right: 1px solid rgba(0, 0, 0, 0.06);
       border-bottom: 1px solid rgba(0, 0, 0, 0.06);
       background: transparent;
-      pointer-events: none;
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    #palette {
+      position: absolute;
+      display: none;
+      padding: 8px;
+      background: #fff;
+      border: 1px solid #ccc;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      z-index: 1000;
+      border-radius: 8px;
+      user-select: none;
+    }
+
+    #palette .swatch {
+      width: 24px;
+      height: 24px;
+      margin: 3px;
+      border: 1px solid #999;
+      border-radius: 4px;
+      display: inline-block;
+      cursor: pointer;
+    }
+
+    #palette .swatch.selected {
+      box-shadow: 0 0 0 2px #000;
     }
 
     /* Slightly stronger line every 5 cells for orientation */
@@ -63,7 +90,7 @@
   <script>
     $(function () {
       const CELL = 28;
-      const OVERSCAN = 1600;      // large hidden margin around the viewport
+      const OVERSCAN = 560;      // reduced overscan for Safari speed (fewer offscreen cells)
       const WORLD_SIZE = 120000;  // large finite scroll area, recentred as needed
       const RECENTER_EDGE = 18000;
 
@@ -72,7 +99,9 @@
 
       const WORLD_CENTER = WORLD_SIZE / 2;
 
-      // Logical offset: logical coordinate = origin + scroll position
+      const COLOR_DEFAULT = '#ADD8E6';
+      const PALETTE_COLORS = ['#ADD8E6', '#FFB6C1', '#90EE90', '#FFD700', '#FFA500', '#87CEEB', '#D3D3D3', '#FFFFFF'];
+
       let originX = -WORLD_CENTER;
       let originY = -WORLD_CENTER;
 
@@ -82,6 +111,14 @@
       let dragStartY = 0;
       let startScrollLeft = 0;
       let startScrollTop = 0;
+
+      let selectedColor = COLOR_DEFAULT;
+      const cellStates = new Map(); // key= "row,col" -> {color, previous}
+
+      let longPressTimer = null;
+      let longPressTriggered = false;
+      let holdStartX = 0;
+      let holdStartY = 0;
 
       function viewportWidth() {
         return $viewport.innerWidth();
@@ -104,6 +141,41 @@
 
       function logicalTop() {
         return originY + $viewport.scrollTop();
+      }
+
+      function getCellKey(row, col) {
+        return row + ',' + col;
+      }
+
+      function updatePaletteSelection() {
+        $('#palette .swatch').removeClass('selected');
+        $('#palette .swatch').filter(function () {
+          return $(this).data('color') === selectedColor;
+        }).addClass('selected');
+      }
+
+      function createPalette() {
+        if ($('#palette').length) return;
+        const $palette = $('<div id="palette"></div>');
+
+        PALETTE_COLORS.forEach(color => {
+          const $swatch = $('<div class="swatch"></div>');
+          $swatch.css('background-color', color);
+          $swatch.data('color', color);
+          $palette.append($swatch);
+        });
+
+        $('body').append($palette);
+        updatePaletteSelection();
+      }
+
+      function showPalette(clientX, clientY) {
+        const $p = $('#palette');
+        $p.css({left: clientX + 'px', top: clientY + 'px'}).show();
+      }
+
+      function hidePalette() {
+        $('#palette').hide();
       }
 
       function scheduleRender() {
@@ -154,7 +226,7 @@
         const startRow = Math.floor((top - OVERSCAN) / CELL);
         const endRow = Math.ceil((top + vh + OVERSCAN) / CELL);
 
-        let html = '';
+        const frag = document.createDocumentFragment();
 
         for (let row = startRow; row < endRow; row++) {
           const y = row * CELL - originY;
@@ -164,16 +236,95 @@
             const x = col * CELL - originX;
             const majorRight = (col % 5 === 0) ? ' major-right' : '';
 
-            html +=
-              '<div class="cell' + majorRight + majorBottom + '" ' +
-              'style="left:' + x + 'px; top:' + y + 'px;"></div>';
+            const key = getCellKey(row, col);
+            const state = cellStates.get(key);
+            const bg = state ? state.color : 'transparent';
+
+            const cell = document.createElement('div');
+            cell.className = 'cell' + majorRight + majorBottom;
+            cell.dataset.row = row;
+            cell.dataset.col = col;
+            cell.style.left = x + 'px';
+            cell.style.top = y + 'px';
+            cell.style.background = bg;
+            frag.appendChild(cell);
           }
         }
 
-        $world.html(html);
+        $world.empty()[0].appendChild(frag);
       }
 
-      // Scroll-driven generation
+      function toggleCellColor(row, col) {
+        const key = getCellKey(row, col);
+        const state = cellStates.get(key);
+
+        if (state && state.color === selectedColor) {
+          if (state.previous) {
+            cellStates.set(key, {color: state.previous, previous: null});
+          } else {
+            cellStates.delete(key);
+          }
+        } else {
+          const previous = state ? state.color : null;
+          cellStates.set(key, {color: selectedColor, previous: previous});
+        }
+
+        scheduleRender();
+      }
+
+      createPalette();
+
+      $world.on('mousedown', function (e) {
+        if (e.which !== 1) return;
+        longPressTriggered = false;
+        holdStartX = e.clientX;
+        holdStartY = e.clientY;
+
+        longPressTimer = setTimeout(function () {
+          longPressTriggered = true;
+          showPalette(e.clientX, e.clientY);
+        }, 400);
+      });
+
+      $world.on('mousemove', function (e) {
+        if (!longPressTimer) return;
+        if (Math.abs(e.clientX - holdStartX) > 5 || Math.abs(e.clientY - holdStartY) > 5) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      });
+
+      $world.on('mouseup', function (e) {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+      });
+
+      $world.on('click', 'div.cell', function (e) {
+        if (longPressTriggered) {
+          e.stopPropagation();
+          return;
+        }
+
+        const row = parseInt($(this).attr('data-row'), 10);
+        const col = parseInt($(this).attr('data-col'), 10);
+        toggleCellColor(row, col);
+      });
+
+      $(document).on('mousedown', function (e) {
+        if ($(e.target).closest('#palette').length === 0 && !$(e.target).is('.swatch')) {
+          hidePalette();
+        }
+      });
+
+      $('body').on('click', '#palette .swatch', function (e) {
+        e.stopPropagation();
+        selectedColor = $(this).data('color');
+        updatePaletteSelection();
+        hidePalette();
+      });
+
       $viewport.on('scroll', scheduleRender);
 
       // Optional mouse drag panning
