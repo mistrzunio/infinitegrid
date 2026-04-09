@@ -100,10 +100,6 @@
       overflow: hidden;
     }
 
-    #saveBtn {
-      display: none;
-    }
-
     #menuBtn {
       width: 38px;
       height: 38px;
@@ -181,6 +177,27 @@
       background: #f2f2f2;
     }
 
+    #previewOverlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+      z-index: 1200;
+      cursor: pointer;
+    }
+
+    #previewOverlay.visible {
+      display: flex;
+    }
+
+    #previewCanvas {
+      image-rendering: pixelated;
+      max-width: calc(100% - 32px);
+      max-height: calc(100% - 32px);
+    }
+
     /* Slightly stronger line every 5 cells for orientation */
     .major-right {
       border-right-color: rgba(0, 0, 0, 0.10);
@@ -201,9 +218,13 @@
     <div id="menuDropdown" role="menu">
       <button id="closeMenuBtn" role="menuitem" aria-label="Close Menu">×</button>
       <button id="clearBtn" role="menuitem">Clear All</button>
+      <button id="previewBtn" role="menuitem" style="display:none">Preview</button>
       <button id="exportBtn" role="menuitem">Export PNG</button>
-      <button id="saveBtn" role="menuitem">Save to Local Storage</button>
     </div>
+  </div>
+
+  <div id="previewOverlay">
+    <canvas id="previewCanvas"></canvas>
   </div>
 
   <script>
@@ -398,6 +419,88 @@
         localStorage.setItem('infiniteGridState', JSON.stringify(data));
       }
 
+      function getPaintedBounds() {
+        let minRow = Infinity;
+        let maxRow = -Infinity;
+        let minCol = Infinity;
+        let maxCol = -Infinity;
+
+        cellStates.forEach((state, key) => {
+          if (!state || !state.color || state.color === CELL_DEFAULT) return;
+          const [row, col] = key.split(',').map(Number);
+          minRow = Math.min(minRow, row);
+          maxRow = Math.max(maxRow, row);
+          minCol = Math.min(minCol, col);
+          maxCol = Math.max(maxCol, col);
+        });
+
+        if (minRow === Infinity) return null;
+
+        return {
+          minRow,
+          maxRow,
+          minCol,
+          maxCol,
+          width: maxCol - minCol + 1,
+          height: maxRow - minRow + 1
+        };
+      }
+
+      function getVisibleSpan() {
+        return {
+          width: viewportWidth() / CELL,
+          height: viewportHeight() / CELL
+        };
+      }
+
+      function shouldShowPreview() {
+        const bounds = getPaintedBounds();
+        if (!bounds) return false;
+        const span = getVisibleSpan();
+        return bounds.width > span.width || bounds.height > span.height;
+      }
+
+      function updatePreviewButtonVisibility() {
+        $('#previewBtn').css('display', shouldShowPreview() ? 'block' : 'none');
+      }
+
+      function drawPreview() {
+        const bounds = getPaintedBounds();
+        if (!bounds) return;
+
+        const padding = 32;
+        const availableWidth = Math.max(0, viewportWidth() - padding);
+        const availableHeight = Math.max(0, viewportHeight() - padding);
+        let scale = Math.min(availableWidth / bounds.width, availableHeight / bounds.height);
+        scale = Math.max(1, Math.floor(scale));
+
+        const canvas = $('#previewCanvas')[0];
+        canvas.width = bounds.width * scale;
+        canvas.height = bounds.height * scale;
+        canvas.style.width = canvas.width + 'px';
+        canvas.style.height = canvas.height + 'px';
+
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        cellStates.forEach((state, key) => {
+          if (!state || !state.color || state.color === CELL_DEFAULT) return;
+          const [row, col] = key.split(',').map(Number);
+          ctx.fillStyle = state.color;
+          ctx.fillRect((col - bounds.minCol) * scale, (row - bounds.minRow) * scale, scale, scale);
+        });
+      }
+
+      function openPreview() {
+        drawPreview();
+        $('#previewOverlay').addClass('visible');
+      }
+
+      function closePreview() {
+        $('#previewOverlay').removeClass('visible');
+      }
+
       function toggleCellColor($cell, row, col) {
         const key = getCellKey(row, col);
         const state = cellStates.get(key);
@@ -419,6 +522,7 @@
 
         $cell.css('background-color', newColor);
         saveCellStates();
+        updatePreviewButtonVisibility();
       }
 
       function loadCellStates() {
@@ -437,6 +541,7 @@
           });
 
           scheduleRender();
+          updatePreviewButtonVisibility();
         } catch (e) {
           console.warn('Unable to load saved grid', e);
         }
@@ -446,6 +551,7 @@
         cellStates.clear();
         saveCellStates();
         scheduleRender();
+        updatePreviewButtonVisibility();
       }
 
       function exportAsPNG() {
@@ -519,15 +625,18 @@
         closeMenu();
       });
 
-      $('#saveBtn').on('click', function () {
-        saveCellStates();
-        alert('Saved to local storage.');
+      $('#previewBtn').on('click', function () {
+        openPreview();
         closeMenu();
       });
 
       $('#exportBtn').on('click', function () {
         exportAsPNG();
         closeMenu();
+      });
+
+      $('#previewOverlay').on('click', function () {
+        closePreview();
       });
 
       $(document).on('click', function (e) {
@@ -585,7 +694,7 @@
         handleHoldMove(touch.clientX, touch.clientY);
       });
 
-      $world.on('touchend', function () {
+      $world.on('touchend touchcancel', function () {
         handleHoldEnd();
       });
 
@@ -595,6 +704,7 @@
 
       $world.on('click', 'div.cell', function (e) {
         if (longPressTriggered) {
+          longPressTriggered = false;
           return;
         }
 
@@ -639,7 +749,13 @@
         dragging = false;
       });
 
-      $(window).on('resize', scheduleRender);
+      $(window).on('resize', function () {
+        scheduleRender();
+        updatePreviewButtonVisibility();
+        if ($('#previewOverlay').is(':visible')) {
+          drawPreview();
+        }
+      });
 
       centerViewport();
       renderGrid();
